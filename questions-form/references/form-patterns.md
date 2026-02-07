@@ -1,180 +1,149 @@
 # Form Patterns Reference
 
-Advanced patterns and edge cases for the questions-form skill.
+Advanced patterns and edge cases for the questions-form Mini App skill.
 
-## Timeout Handling
+## Disabling "Other" on Specific Questions
 
-If more than 10 minutes pass between sending the form and receiving a Submit callback, the form may be stale.
-
-On the next user interaction:
-- If it is a `form:` callback, process it normally (form is still active)
-- If it is unrelated, ask: "You have an incomplete form from earlier. Would you like to continue or start over?"
-
-## Form Cancellation
-
-Always include a Cancel button alongside Submit:
+By default every question shows an "Other — type your answer" text input.
+To disable it for a specific question, set `allowOther: false`:
 
 ```json
-[
-  [{ "text": "\u2713 Submit All Answers", "callback_data": "form:submit" }],
-  [{ "text": "\u2717 Cancel", "callback_data": "form:cancel" }]
-]
-```
-
-On `form:cancel`: discard `form_state`, inform the user, and return to normal conversation.
-
-## Dependent Questions
-
-When question B depends on question A's answer:
-
-1. Send all non-dependent questions as the initial form
-2. When A is answered and its value triggers B, send B as a new message with buttons
-3. Add the new question to `form_state` and update the submit validation
-
-Example:
-- Q1: "Platform?" → `[Web] [Mobile]`
-- If user picks "Mobile": send Q1a: "iOS or Android?" → `[iOS] [Android] [Both]`
-- Submit now requires both Q1 and Q1a to be answered
-
-## Large Option Sets (>6 options)
-
-Split into rows of 2-3 buttons each. Always keep "Other" on its own final row.
-
-Example with 7 options:
-
-```json
-"buttons": [
-  [
-    { "text": "React", "callback_data": "form:fw:react" },
-    { "text": "Vue", "callback_data": "form:fw:vue" },
-    { "text": "Angular", "callback_data": "form:fw:angular" }
-  ],
-  [
-    { "text": "Svelte", "callback_data": "form:fw:svelte" },
-    { "text": "Next.js", "callback_data": "form:fw:next" },
-    { "text": "Nuxt", "callback_data": "form:fw:nuxt" }
-  ],
-  [
-    { "text": "Remix", "callback_data": "form:fw:remix" }
-  ],
-  [
-    { "text": "Other (type your answer)", "callback_data": "form:fw:other" }
+{
+  "id": "priority",
+  "text": "Priority level?",
+  "allowOther": false,
+  "options": [
+    { "label": "Low", "value": "low" },
+    { "label": "Medium", "value": "medium" },
+    { "label": "High", "value": "high" }
   ]
-]
+}
 ```
 
-## Multi-Select Questions
+## Long Option Lists
 
-For questions where the user can select multiple options, use a toggle pattern:
+The form renders options as a vertical list of tappable rows, so many options
+work well. For questions with 8+ options, consider grouping related choices
+or splitting into two questions instead.
 
-- `callback_data` format: `form:<qid>:toggle:<value>`
-- Agent maintains a Set for that question in `form_state`
-- Each click adds or removes the value from the set
-- Acknowledge each toggle:
-  - Added: `"Added **React** to frameworks (selected: React, Vue)"`
-  - Removed: `"Removed **React** from frameworks (selected: Vue)"`
+The form scrolls naturally on mobile — no special handling needed.
 
-Include a "Done selecting" button to finalize the multi-select question:
+## Form Config Size Limits
+
+The config is base64-encoded in the URL hash. Telegram Web App URLs have a
+practical limit of ~2048 characters. This is enough for roughly 10-15 questions
+with 4-5 options each.
+
+If you exceed this:
+- Shorten question text and option labels
+- Use shorter `id` and `value` strings
+- Split into multiple forms sent sequentially
+
+## User Dismisses the Form
+
+If the user swipes down or taps outside to close the Mini App without
+submitting, **nothing is sent to the agent**. The agent receives no message.
+
+How to handle this:
+- The agent should not block indefinitely waiting for form data
+- If the user sends a regular text message after you sent the form button,
+  treat it as them choosing not to use the form — respond normally
+- You can ask: "I sent you a form to fill out. Would you prefer to answer
+  the questions here in chat instead?"
+
+## Form Theming
+
+The Mini App automatically uses Telegram's theme variables:
+- `--tg-theme-bg-color` — background
+- `--tg-theme-text-color` — text
+- `--tg-theme-button-color` — selected option highlight & submit button
+- `--tg-theme-secondary-bg-color` — unselected option background
+- `--tg-theme-hint-color` — placeholder text & question numbers
+
+This means the form matches the user's Telegram appearance (dark mode, custom
+themes, etc.) with no extra configuration.
+
+## Complete Example
+
+### Agent builds the config:
 
 ```json
-[
-  [
-    { "text": "React", "callback_data": "form:fw:toggle:react" },
-    { "text": "Vue", "callback_data": "form:fw:toggle:vue" }
-  ],
-  [
-    { "text": "Angular", "callback_data": "form:fw:toggle:angular" },
-    { "text": "Svelte", "callback_data": "form:fw:toggle:svelte" }
-  ],
-  [
-    { "text": "\u2713 Done selecting", "callback_data": "form:fw:done" },
-    { "text": "Other (type your answer)", "callback_data": "form:fw:other" }
+{
+  "questions": [
+    {
+      "id": "type",
+      "text": "What type of project is this?",
+      "options": [
+        { "label": "Web App", "value": "web" },
+        { "label": "Mobile App", "value": "mobile" },
+        { "label": "API / Backend", "value": "api" }
+      ]
+    },
+    {
+      "id": "timeline",
+      "text": "What is your timeline?",
+      "options": [
+        { "label": "This week", "value": "this_week" },
+        { "label": "This month", "value": "this_month" },
+        { "label": "No rush", "value": "no_rush" }
+      ]
+    },
+    {
+      "id": "budget",
+      "text": "What is your budget range?",
+      "options": [
+        { "label": "< $1k", "value": "lt_1k" },
+        { "label": "$1k - $5k", "value": "1k_5k" },
+        { "label": "$5k - $10k", "value": "5k_10k" },
+        { "label": "> $10k", "value": "gt_10k" }
+      ]
+    }
   ]
-]
+}
 ```
 
-## Free-Text Disambiguation
+### Agent encodes and sends:
 
-When `awaiting_freetext` is set and the user sends a message:
-
-- If the message starts with `form:` (i.e., it's a button callback), process it as a button click. **Keep `awaiting_freetext` active** — the user will still need to provide their text later.
-- If the message is plain text, treat it as the free-text answer for the pending question.
-
-This prevents confusion when a user clicks another question's button while the agent expects free text input.
-
-## Resuming Interrupted Forms
-
-If the conversation is interrupted (e.g., agent restart, session reset):
-
-- The form state is lost (it lives in conversation context, not persistent storage)
-- If the user sends a `form:` callback that the agent has no context for, respond: "It looks like you're responding to a previous form that I no longer have context for. Let me re-send the questions."
-- Re-send the entire form from scratch
-
-## Partial Submission
-
-If a user clicks Submit with only some questions answered:
-
-- List the unanswered questions by name/number
-- Do **not** re-send the form — the existing button messages still work
-- The user can click the remaining buttons and tap Submit again
-
-Example response:
-`"You still need to answer: **2. Timeline** and **3. Budget**. Tap the buttons above, then Submit again."`
-
-## Complete Example: 3-Question Form
-
-### Questions:
-1. Project type (Web App / Mobile / API / Other)
-2. Timeline (This week / This month / No rush / Other)
-3. Budget (< $1k / $1k-5k / $5k-10k / > $10k / Other)
-
-### Messages sent (5 total):
-
-**Message 1** (header):
 ```
-"**I have a few questions before we proceed.**
-Please answer each one by tapping a button, then tap Submit when done."
+base64(encodeURIComponent(JSON.stringify(config))) → "eyJxdWVzdGlvbn..."
+url = "https://owner.github.io/skill-questions-form/form.html#eyJxdWVzdGlvbn..."
 ```
 
-**Message 2** (Q1):
-```
-text: "**1. What type of project?**"
-buttons: [[Web App, Mobile, API], [Other (type your answer)]]
-```
-
-**Message 3** (Q2):
-```
-text: "**2. What is your timeline?**"
-buttons: [[This week, This month, No rush], [Other (type your answer)]]
+```json
+{
+  "action": "send",
+  "channel": "telegram",
+  "message": "I have a few questions before we proceed. Tap the button below to fill them out.",
+  "buttons": [[{ "text": "Fill out form", "web_app": { "url": "<url>" } }]]
+}
 ```
 
-**Message 4** (Q3):
+### User experience:
+
+1. User taps "Fill out form" — Mini App panel slides up inside Telegram
+2. User sees 3 questions with radio-button options and "Other" inputs
+3. User taps options — they highlight with the theme color
+4. User can change any answer by tapping a different option
+5. User taps "Submit All Answers" (Telegram's native main button)
+6. Mini App closes, form data sent to agent as one JSON message
+
+### Agent receives:
+
+```json
+{
+  "type": { "question": "What type of project is this?", "value": "mobile", "label": "Mobile App" },
+  "timeline": { "question": "What is your timeline?", "value": "End of March", "label": "End of March" },
+  "budget": { "question": "What is your budget range?", "value": "1k_5k", "label": "$1k - $5k" }
+}
 ```
-text: "**3. Budget range?**"
-buttons: [[< $1k, $1k-5k], [$5k-10k, > $10k], [Other (type your answer)]]
+
+### Agent responds:
+
 ```
+Here's what I got:
+• Project type: **Mobile App**
+• Timeline: **End of March**
+• Budget: **$1k - $5k**
 
-**Message 5** (submit):
+Let me work on this now.
 ```
-text: "**When you've answered all questions above, tap Submit.**"
-buttons: [[\u2713 Submit All Answers], [\u2717 Cancel]]
-```
-
-### Callback handling sequence:
-
-1. User taps "Mobile" on Q1 → `callback_data: form:type:mobile`
-   → Agent: `"Got it -- Project type: **Mobile**"`
-
-2. User taps "Other" on Q2 → `callback_data: form:timeline:other`
-   → Agent: `"Type your answer for: What is your timeline?"`
-   → User types: `"End of March"`
-   → Agent: `"Got it -- Timeline: **End of March**"`
-
-3. User taps "$1k-5k" on Q3 → `callback_data: form:budget:1k_5k`
-   → Agent: `"Got it -- Budget: **$1k-5k**"`
-
-4. User taps Submit → `callback_data: form:submit`
-   → All answered. Agent proceeds with:
-   ```
-   { type: "mobile", timeline: "End of March", budget: "1k_5k" }
-   ```
