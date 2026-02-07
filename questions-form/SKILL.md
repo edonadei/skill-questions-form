@@ -29,10 +29,8 @@ Do **not** use this for a single yes/no question — just send one message with 
 
 The form is hosted at:
 ```
-FORM_BASE_URL = https://<owner>.github.io/skill-questions-form/form.html
+FORM_BASE_URL = https://edonadei.github.io/skill-questions-form/form.html
 ```
-
-Replace `<owner>` with the GitHub username where this repo is deployed.
 
 ## Form Protocol
 
