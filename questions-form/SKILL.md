@@ -240,6 +240,26 @@ Submit, keeping the UX tight and avoiding message spam.
 
 ---
 
+## Post-Submit Response Streaming (Future: sendMessageDraft)
+
+After `form:submit`, when the model generates its full response, OpenClaw currently
+streams it using repeated `editMessageText` calls (`streamMode: "partial"`).
+
+Telegram Bot API 9.3 added **`sendMessageDraft`** — a native streaming API that
+sends partial text as it's generated, without the `sendMessage` + `editMessageText`
+hack. This is cleaner and avoids hitting Telegram rate limits on rapid edits.
+
+**When available** (requires bot to have forum topic mode enabled via
+`channels.telegram.forumTopicsEnabled: true` in OpenClaw config):
+- OpenClaw will automatically use `sendMessageDraft` for the post-submit response stream
+- Each token chunk is sent via `sendMessageDraft` with a stable `draft_id`
+- The draft materializes into a real message when the response is complete
+
+**No action needed in the skill** — this is handled at the OpenClaw layer transparently.
+Track support: https://github.com/openclaw/openclaw/issues/15714
+
+---
+
 ## Edge Cases
 
 See [references/form-patterns.md](references/form-patterns.md) for:
