@@ -12,8 +12,23 @@ description: >
 
 # Questions Form
 
-Present multiple clarifying questions as a Telegram inline-button form.
-All questions appear at once; the user answers in any order, then submits.
+Present a **single, self-contained Telegram message** that acts as an interactive
+form. The user taps buttons to toggle answers; the message updates in-place on each
+tap. The model is only invoked meaningfully on `form:submit`.
+
+## Core Design Principle
+
+**Do NOT send a separate acknowledgement message per button tap.**
+Instead, after recording the answer, **edit the form message in-place** to reflect
+the new state (checkmarks, selections). Reply with `NO_REPLY` to suppress any
+additional model output. This eliminates wasteful model roundtrips for every click.
+
+The full flow:
+1. Model sends **one form message** with all questions + buttons
+2. User taps buttons → model edits that same message silently → `NO_REPLY`
+3. User taps Submit → model wakes fully, reads collected answers, proceeds
+
+---
 
 ## When to Use
 
@@ -21,188 +36,215 @@ All questions appear at once; the user answers in any order, then submits.
 - Questions have enumerable options (with optional free-text fallback)
 - The channel is Telegram
 
-Do **not** use this pattern for a single yes/no question — just send one message with buttons for that.
+Do **not** use this pattern for a single yes/no question — just send a plain
+message with two buttons.
+
+---
 
 ## Form Protocol
 
-### Step 1: Compose the Form
-
-Define each question internally as an object:
+### Step 1: Define Questions Internally
 
 ```
-{ id: "type",     text: "What type of project?", options: ["Web App", "Mobile", "API"] }
-{ id: "timeline", text: "What is your timeline?", options: ["This week", "This month", "No rush"] }
-{ id: "budget",   text: "Budget range?",          options: ["< $1k", "$1k-5k", "$5k-10k", "> $10k"] }
-```
+questions = [
+  { id: "type",     label: "What type of project?",  options: ["Web App", "Mobile", "API"] },
+  { id: "timeline", label: "What is your timeline?",  options: ["This week", "This month", "No rush"] },
+  { id: "budget",   label: "Budget range?",            options: ["< $1k", "$1k–5k", "$5k–10k", "> $10k"] },
+]
 
-Initialize internal tracking state:
-
-```
 form_state = { type: null, timeline: null, budget: null }
+form_message_id = null   // filled after sending the form
 awaiting_freetext = null
-form_submitted = false
 ```
 
-### Step 2: Send the Header
+### Step 2: Render the Form as a Single Message
 
-Send a plain message (no buttons) as the form introduction:
+Build the entire form — header, all questions with their current selections, and
+Submit/Cancel — into **one message with one button keyboard**.
+
+Use `✅` to mark the currently selected option, plain label for unselected.
+
+**Initial render example:**
+
+```
+📋 A few questions before we proceed — tap to answer, then Submit.
+
+1️⃣ What type of project?
+2️⃣ What is your timeline?
+3️⃣ Budget range?
+```
+
+Buttons:
 
 ```json
 {
   "action": "send",
   "channel": "telegram",
-  "message": "**I have a few questions before we proceed.**\nPlease answer each one by tapping a button, then tap Submit when done."
-}
-```
-
-### Step 3: Send Each Question
-
-For each question, send a **separate message** with inline buttons.
-Put selectable options in rows of 2-3 buttons. Always put "Other" on its own last row.
-
-The `callback_data` **must** follow this convention: `form:<question_id>:<value>`
-
-Example:
-
-```json
-{
-  "action": "send",
-  "channel": "telegram",
-  "message": "**1. What type of project is this?**",
+  "message": "📋 *A few questions before we proceed* — tap to answer, then Submit.\n\n1️⃣ What type of project?\n2️⃣ What is your timeline?\n3️⃣ Budget range?",
   "buttons": [
     [
-      { "text": "Web App", "callback_data": "form:type:web" },
-      { "text": "Mobile", "callback_data": "form:type:mobile" },
-      { "text": "API", "callback_data": "form:type:api" }
+      { "text": "Web App",  "callback_data": "form:type:web" },
+      { "text": "Mobile",   "callback_data": "form:type:mobile" },
+      { "text": "API",      "callback_data": "form:type:api" }
     ],
     [
-      { "text": "Other (type your answer)", "callback_data": "form:type:other" }
-    ]
-  ]
-}
-```
-
-```json
-{
-  "action": "send",
-  "channel": "telegram",
-  "message": "**2. What is your timeline?**",
-  "buttons": [
+      { "text": "Other ✏️", "callback_data": "form:type:other" }
+    ],
     [
-      { "text": "This week", "callback_data": "form:timeline:this_week" },
+      { "text": "This week",  "callback_data": "form:timeline:this_week" },
       { "text": "This month", "callback_data": "form:timeline:this_month" },
-      { "text": "No rush", "callback_data": "form:timeline:no_rush" }
+      { "text": "No rush",    "callback_data": "form:timeline:no_rush" }
     ],
     [
-      { "text": "Other (type your answer)", "callback_data": "form:timeline:other" }
+      { "text": "Other ✏️", "callback_data": "form:timeline:other" }
+    ],
+    [
+      { "text": "< $1k",    "callback_data": "form:budget:lt_1k" },
+      { "text": "$1k–5k",   "callback_data": "form:budget:1k_5k" }
+    ],
+    [
+      { "text": "$5k–10k",  "callback_data": "form:budget:5k_10k" },
+      { "text": "> $10k",   "callback_data": "form:budget:gt_10k" }
+    ],
+    [
+      { "text": "Other ✏️", "callback_data": "form:budget:other" }
+    ],
+    [
+      { "text": "✓ Submit", "callback_data": "form:submit" },
+      { "text": "✗ Cancel", "callback_data": "form:cancel" }
     ]
   ]
 }
 ```
 
-```json
-{
-  "action": "send",
-  "channel": "telegram",
-  "message": "**3. Budget range?**",
-  "buttons": [
-    [
-      { "text": "< $1k", "callback_data": "form:budget:lt_1k" },
-      { "text": "$1k-5k", "callback_data": "form:budget:1k_5k" }
-    ],
-    [
-      { "text": "$5k-10k", "callback_data": "form:budget:5k_10k" },
-      { "text": "> $10k", "callback_data": "form:budget:gt_10k" }
-    ],
-    [
-      { "text": "Other (type your answer)", "callback_data": "form:budget:other" }
-    ]
-  ]
-}
-```
+After sending, save the returned `message_id` as `form_message_id`.
 
-### Step 4: Send the Submit Button
+### Step 3: Handle Button Callbacks
 
-After all questions, send the submit/cancel message:
+When a message arrives that is a `callback_data:` value starting with `form:`:
+
+#### Regular option — `form:<qid>:<value>` (value ≠ `other`, `submit`, `cancel`)
+
+1. Record: `form_state[qid] = value`
+2. Re-render the form message with the new selection marked `✅`
+3. **Edit the form message in-place** using `editMessage`:
 
 ```json
 {
-  "action": "send",
+  "action": "edit",
   "channel": "telegram",
-  "message": "**When you've answered all questions above, tap Submit.**",
-  "buttons": [
-    [{ "text": "\u2713 Submit All Answers", "callback_data": "form:submit" }],
-    [{ "text": "\u2717 Cancel", "callback_data": "form:cancel" }]
-  ]
+  "messageId": "<form_message_id>",
+  "message": "<updated form text with selections>",
+  "buttons": [ /* full updated keyboard */ ]
 }
 ```
 
-### Step 5: Handle Callbacks
+4. Respond with `NO_REPLY` — do not send any additional message.
 
-When you receive a callback starting with `form:`:
+#### "Other" option — `form:<qid>:other`
 
-**Regular option** (`form:<qid>:<value>` where value is not `other`):
-- Record the answer: `form_state[qid] = value`
-- Acknowledge: send `"Got it -- <question label>: **<chosen label>**"`
+1. Set `awaiting_freetext = qid`
+2. Edit the form message to show `✏️ Type your answer for Q<n> in the chat ↓`
+3. Respond with `NO_REPLY`
 
-**"Other" option** (`form:<qid>:other`):
-- Send: `"Type your answer for: <question text>"`
-- Set `awaiting_freetext = qid`
-- The **next plain text message** from the user is their free-text answer
-- Record: `form_state[qid] = <user's text>`
-- Acknowledge: `"Got it -- <question label>: **<user's text>**"`
-- Clear `awaiting_freetext`
+#### Free-text answer (when `awaiting_freetext` is set)
 
-**Submit** (`form:submit`):
-- Check `form_state` for any `null` values
-- If incomplete: send `"You still need to answer: <list of unanswered questions>"`
-- If complete: set `form_submitted = true` and proceed with the collected answers
+Triggered when the next plain-text message arrives:
 
-**Cancel** (`form:cancel`):
-- Discard `form_state`
-- Send: `"Form cancelled. Let me know how you'd like to proceed."`
+1. Record: `form_state[awaiting_freetext] = <user's text>`
+2. Clear `awaiting_freetext`
+3. Edit the form message to show the typed value in the relevant row
+4. Respond with `NO_REPLY`
 
-### Step 6: Use the Answers
+#### Submit — `form:submit`
 
-Once submitted, reference the collected answers as structured data and proceed:
+1. Check for any `null` values in `form_state`
+2. If **incomplete**: edit the form message to add a warning like `⚠️ Still needed: Timeline, Budget` — do **not** submit yet. Respond with `NO_REPLY`.
+3. If **complete**: proceed with collected answers in your normal reply. Remove the form buttons by editing to a confirmation:
+
+```json
+{
+  "action": "edit",
+  "channel": "telegram",
+  "messageId": "<form_message_id>",
+  "message": "✅ Form submitted. Processing your answers..."
+}
+```
+
+Then continue with the task using `form_state`.
+
+#### Cancel — `form:cancel`
+
+1. Discard `form_state` and `form_message_id`
+2. Edit the form message to show `❌ Cancelled.` (no buttons)
+3. Send a brief follow-up: `"Form cancelled. Let me know how you'd like to proceed."`
+
+---
+
+## In-Place Re-Render: How to Reflect Selections
+
+When re-rendering the keyboard after a selection, mark the chosen option with `✅`
+prepended to its text, and leave others plain. The callback_data stays the same
+(re-clicking toggles, overwriting the previous selection).
+
+Example after user picks "Mobile" for Q1:
+
+```json
+[
+  [
+    { "text": "Web App",      "callback_data": "form:type:web" },
+    { "text": "✅ Mobile",   "callback_data": "form:type:mobile" },
+    { "text": "API",          "callback_data": "form:type:api" }
+  ],
+  ...
+]
+```
+
+Also update the message text to reflect current state. Example:
 
 ```
-Collected: { type: "mobile", timeline: "End of March", budget: "1k_5k" }
+📋 *A few questions before we proceed* — tap to answer, then Submit.
+
+1️⃣ What type of project? → *Mobile* ✅
+2️⃣ What is your timeline?
+3️⃣ Budget range?
 ```
 
-Now continue with the original task using these clarified requirements.
-
-## Changing Answers
-
-Users can click a different button for any question at any time before submitting.
-Simply overwrite the previous value and acknowledge the change:
-
-`"Updated -- <question>: **<new value>**"`
-
-## Callback Data Convention
-
-- All form callbacks **must** use the `form:` prefix
-- Format: `form:<question_id>:<value>`
-- Keep question IDs short (2-8 chars) — Telegram has a 64-byte callback_data limit
-- Keep values short and use underscores instead of spaces
-- The agent identifies form callbacks by checking if the incoming message starts with `form:`
+---
 
 ## Button Layout Rules
 
-- Maximum 2-3 buttons per row for clean rendering
+- Maximum 3 buttons per row for clean rendering
 - Keep button labels under 20 characters
 - Use Title Case for option labels
-- "Other" button always says: `"Other (type your answer)"`
-- "Other" button always goes on its own last row
-- Submit button includes checkmark: `"\u2713 Submit All Answers"`
-- Cancel button includes X mark: `"\u2717 Cancel"`
+- "Other" button: always `"Other ✏️"` on its own row
+- Group all questions' buttons in a single keyboard — separated by visual rows
+- Submit/Cancel always on the last row together
+- Selected option: prepend `✅ ` to the button text
+- Telegram callback_data limit: 64 bytes — keep `form:<qid>:<value>` short
 
-## Edge Cases and Advanced Patterns
+---
+
+## Token Efficiency Summary
+
+| Event              | Model invocation? | Output           |
+|--------------------|-------------------|------------------|
+| Button tap         | Yes (lightweight) | editMessage only → NO_REPLY |
+| Free-text answer   | Yes (lightweight) | editMessage only → NO_REPLY |
+| Submit (complete)  | Yes (full)        | Proceed with task |
+| Submit (incomplete)| Yes (lightweight) | editMessage warning → NO_REPLY |
+| Cancel             | Yes (lightweight) | editMessage + one follow-up |
+
+The model is invoked on each interaction but produces **zero chat output** until
+Submit, keeping the UX tight and avoiding message spam.
+
+---
+
+## Edge Cases
 
 See [references/form-patterns.md](references/form-patterns.md) for:
-- Handling timeouts and abandoned forms
-- Dependent questions (show question B only after A is answered)
-- Large option sets (>6 options)
-- Multi-select questions (toggle pattern)
-- Free-text disambiguation
-- Resuming interrupted forms
+- Timeout and abandoned form handling
+- Dependent questions (show Q2 only after Q1 is answered)
+- Large option sets (>6 options per question)
+- Multi-select toggle pattern
+- Resuming interrupted forms (form_message_id lost)

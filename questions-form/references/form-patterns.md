@@ -2,179 +2,217 @@
 
 Advanced patterns and edge cases for the questions-form skill.
 
+> **Key rule:** All intermediate interactions (button taps, free-text, partial submit)
+> must `editMessage` in place and respond with `NO_REPLY`. Never send a new chat
+> message mid-form except on Cancel or after a successful Submit.
+
+---
+
 ## Timeout Handling
 
-If more than 10 minutes pass between sending the form and receiving a Submit callback, the form may be stale.
+If more than 10 minutes pass between sending the form and receiving a `form:submit`
+callback, the form may be stale.
 
-On the next user interaction:
-- If it is a `form:` callback, process it normally (form is still active)
-- If it is unrelated, ask: "You have an incomplete form from earlier. Would you like to continue or start over?"
+On the next `form:` interaction:
+- Process it normally if `form_message_id` is still known
+- If unknown (e.g. session restarted): tell the user the form expired and re-send it
+
+On the next unrelated message:
+- Ask: `"You have an incomplete form. Would you like to continue or start over?"`
+  with two buttons: `[Continue]` / `[Start over]`
+
+---
 
 ## Form Cancellation
 
-Always include a Cancel button alongside Submit:
+Always include Cancel alongside Submit in the last keyboard row:
 
 ```json
 [
-  [{ "text": "\u2713 Submit All Answers", "callback_data": "form:submit" }],
-  [{ "text": "\u2717 Cancel", "callback_data": "form:cancel" }]
+  { "text": "✓ Submit", "callback_data": "form:submit" },
+  { "text": "✗ Cancel", "callback_data": "form:cancel" }
 ]
 ```
 
-On `form:cancel`: discard `form_state`, inform the user, and return to normal conversation.
+On `form:cancel`:
+1. Edit the form message to `❌ Cancelled.` (no buttons)
+2. Send one follow-up: `"Form cancelled. Let me know how you'd like to proceed."`
+
+---
 
 ## Dependent Questions
 
-When question B depends on question A's answer:
+When question B should only appear after question A is answered with a specific value:
 
-1. Send all non-dependent questions as the initial form
-2. When A is answered and its value triggers B, send B as a new message with buttons
-3. Add the new question to `form_state` and update the submit validation
+1. Render the initial form without Q_B in the keyboard
+2. When Q_A is answered and its value triggers Q_B:
+   - Add Q_B's rows into the keyboard and update the message text
+   - Edit the form message in-place with the expanded keyboard
+3. Update `form_state` to include Q_B's key, initialized to `null`
+4. Submit validation must now include Q_B
 
 Example:
 - Q1: "Platform?" → `[Web] [Mobile]`
-- If user picks "Mobile": send Q1a: "iOS or Android?" → `[iOS] [Android] [Both]`
-- Submit now requires both Q1 and Q1a to be answered
+- If user picks "Mobile": add Q1a: "iOS or Android?" → `[iOS] [Android] [Both]`
+- Edit message to show the new question row inserted after Q1's row
 
-## Large Option Sets (>6 options)
+---
 
-Split into rows of 2-3 buttons each. Always keep "Other" on its own final row.
+## Large Option Sets (>6 Options per Question)
 
-Example with 7 options:
+Split into rows of 2–3 buttons each within the same keyboard. Keep "Other ✏️" on
+its own final row for that question.
 
-```json
-"buttons": [
-  [
-    { "text": "React", "callback_data": "form:fw:react" },
-    { "text": "Vue", "callback_data": "form:fw:vue" },
-    { "text": "Angular", "callback_data": "form:fw:angular" }
-  ],
-  [
-    { "text": "Svelte", "callback_data": "form:fw:svelte" },
-    { "text": "Next.js", "callback_data": "form:fw:next" },
-    { "text": "Nuxt", "callback_data": "form:fw:nuxt" }
-  ],
-  [
-    { "text": "Remix", "callback_data": "form:fw:remix" }
-  ],
-  [
-    { "text": "Other (type your answer)", "callback_data": "form:fw:other" }
-  ]
-]
-```
-
-## Multi-Select Questions
-
-For questions where the user can select multiple options, use a toggle pattern:
-
-- `callback_data` format: `form:<qid>:toggle:<value>`
-- Agent maintains a Set for that question in `form_state`
-- Each click adds or removes the value from the set
-- Acknowledge each toggle:
-  - Added: `"Added **React** to frameworks (selected: React, Vue)"`
-  - Removed: `"Removed **React** from frameworks (selected: Vue)"`
-
-Include a "Done selecting" button to finalize the multi-select question:
+Example with 7 options for a "Framework?" question:
 
 ```json
 [
   [
-    { "text": "React", "callback_data": "form:fw:toggle:react" },
-    { "text": "Vue", "callback_data": "form:fw:toggle:vue" }
+    { "text": "React",   "callback_data": "form:fw:react" },
+    { "text": "Vue",     "callback_data": "form:fw:vue" },
+    { "text": "Angular", "callback_data": "form:fw:angular" }
   ],
   [
-    { "text": "Angular", "callback_data": "form:fw:toggle:angular" },
-    { "text": "Svelte", "callback_data": "form:fw:toggle:svelte" }
+    { "text": "Svelte",  "callback_data": "form:fw:svelte" },
+    { "text": "Next.js", "callback_data": "form:fw:next" },
+    { "text": "Nuxt",    "callback_data": "form:fw:nuxt" }
   ],
   [
-    { "text": "\u2713 Done selecting", "callback_data": "form:fw:done" },
-    { "text": "Other (type your answer)", "callback_data": "form:fw:other" }
+    { "text": "Remix",   "callback_data": "form:fw:remix" }
+  ],
+  [
+    { "text": "Other ✏️", "callback_data": "form:fw:other" }
   ]
 ]
 ```
+
+---
+
+## Multi-Select Questions
+
+For questions where the user can pick multiple options, use a toggle pattern:
+
+- `callback_data` format: `form:<qid>:toggle:<value>`
+- Maintain a `Set` for that question in `form_state`
+- Each click adds or removes the value from the set
+- Re-render the keyboard in-place after each toggle (selected items get `✅ `)
+- Include a "Done ✓" button to close the multi-select
+
+```json
+[
+  [
+    { "text": "✅ React", "callback_data": "form:fw:toggle:react" },
+    { "text": "Vue",      "callback_data": "form:fw:toggle:vue" }
+  ],
+  [
+    { "text": "Angular",  "callback_data": "form:fw:toggle:angular" },
+    { "text": "Svelte",   "callback_data": "form:fw:toggle:svelte" }
+  ],
+  [
+    { "text": "✓ Done selecting", "callback_data": "form:fw:done" },
+    { "text": "Other ✏️",         "callback_data": "form:fw:other" }
+  ]
+]
+```
+
+When the user taps "Done selecting":
+- Record the current Set as the final answer for that question
+- Collapse the multi-select rows to a single summary row showing selected items
+- Edit the form message in-place → `NO_REPLY`
+
+---
 
 ## Free-Text Disambiguation
 
 When `awaiting_freetext` is set and the user sends a message:
 
-- If the message starts with `form:` (i.e., it's a button callback), process it as a button click. **Keep `awaiting_freetext` active** — the user will still need to provide their text later.
-- If the message is plain text, treat it as the free-text answer for the pending question.
+- If the message is a `callback_data:` value (i.e. a button tap): process it
+  normally as a button click. **Keep `awaiting_freetext` active** — the user still
+  needs to type their answer.
+- If the message is plain text: treat it as the free-text answer.
+  - Record: `form_state[awaiting_freetext] = <user text>`
+  - Clear `awaiting_freetext`
+  - Edit the form message to show the typed value in the relevant row
+  - `NO_REPLY`
 
-This prevents confusion when a user clicks another question's button while the agent expects free text input.
+---
 
 ## Resuming Interrupted Forms
 
-If the conversation is interrupted (e.g., agent restart, session reset):
+If the session is reset or `form_message_id` is lost:
+- The existing Telegram message still exists but the model has no reference to it
+- On the next `form:` callback: respond with:
+  `"It looks like I've lost track of the previous form. Let me re-send it."`
+- Re-send the full form from scratch
 
-- The form state is lost (it lives in conversation context, not persistent storage)
-- If the user sends a `form:` callback that the agent has no context for, respond: "It looks like you're responding to a previous form that I no longer have context for. Let me re-send the questions."
-- Re-send the entire form from scratch
+---
 
 ## Partial Submission
 
-If a user clicks Submit with only some questions answered:
+If the user taps Submit with unanswered questions:
+1. Edit the form message to append a warning line:
+   `⚠️ Still needed: <question labels>`
+2. Do **not** send a new message
+3. `NO_REPLY`
 
-- List the unanswered questions by name/number
-- Do **not** re-send the form — the existing button messages still work
-- The user can click the remaining buttons and tap Submit again
+The existing buttons remain active — user can answer remaining questions and tap
+Submit again.
 
-Example response:
-`"You still need to answer: **2. Timeline** and **3. Budget**. Tap the buttons above, then Submit again."`
+---
 
 ## Complete Example: 3-Question Form
 
-### Questions:
-1. Project type (Web App / Mobile / API / Other)
-2. Timeline (This week / This month / No rush / Other)
-3. Budget (< $1k / $1k-5k / $5k-10k / > $10k / Other)
+### Questions
 
-### Messages sent (5 total):
+1. Project type: Web App / Mobile / API / Other
+2. Timeline: This week / This month / No rush / Other
+3. Budget: < $1k / $1k–5k / $5k–10k / > $10k / Other
 
-**Message 1** (header):
-```
-"**I have a few questions before we proceed.**
-Please answer each one by tapping a button, then tap Submit when done."
-```
+### Initial message (1 message total)
 
-**Message 2** (Q1):
 ```
-text: "**1. What type of project?**"
-buttons: [[Web App, Mobile, API], [Other (type your answer)]]
-```
+text:
+  📋 A few questions before we proceed — tap to answer, then Submit.
 
-**Message 3** (Q2):
-```
-text: "**2. What is your timeline?**"
-buttons: [[This week, This month, No rush], [Other (type your answer)]]
-```
+  1️⃣ What type of project?
+  2️⃣ What is your timeline?
+  3️⃣ Budget range?
 
-**Message 4** (Q3):
-```
-text: "**3. Budget range?**"
-buttons: [[< $1k, $1k-5k], [$5k-10k, > $10k], [Other (type your answer)]]
+buttons:
+  [Web App]  [Mobile]  [API]
+  [Other ✏️]
+  [This week]  [This month]  [No rush]
+  [Other ✏️]
+  [< $1k]  [$1k–5k]
+  [$5k–10k]  [> $10k]
+  [Other ✏️]
+  [✓ Submit]  [✗ Cancel]
 ```
 
-**Message 5** (submit):
-```
-text: "**When you've answered all questions above, tap Submit.**"
-buttons: [[\u2713 Submit All Answers], [\u2717 Cancel]]
-```
+### Interaction sequence (all via editMessage + NO_REPLY until submit)
 
-### Callback handling sequence:
+1. User taps "Mobile" → `callback_data: form:type:mobile`
+   → `form_state.type = "mobile"`
+   → Edit message: Q1 line becomes `1️⃣ What type of project? → *Mobile* ✅`
+   → "Mobile" button becomes `✅ Mobile`
+   → `NO_REPLY`
 
-1. User taps "Mobile" on Q1 → `callback_data: form:type:mobile`
-   → Agent: `"Got it -- Project type: **Mobile**"`
+2. User taps "Other ✏️" on Q2 → `callback_data: form:timeline:other`
+   → `awaiting_freetext = "timeline"`
+   → Edit message: Q2 line becomes `2️⃣ What is your timeline? → ✏️ type in chat ↓`
+   → `NO_REPLY`
 
-2. User taps "Other" on Q2 → `callback_data: form:timeline:other`
-   → Agent: `"Type your answer for: What is your timeline?"`
-   → User types: `"End of March"`
-   → Agent: `"Got it -- Timeline: **End of March**"`
+3. User types: `"End of March"`
+   → `form_state.timeline = "End of March"`, `awaiting_freetext = null`
+   → Edit message: Q2 line becomes `2️⃣ What is your timeline? → *End of March* ✅`
+   → `NO_REPLY`
 
-3. User taps "$1k-5k" on Q3 → `callback_data: form:budget:1k_5k`
-   → Agent: `"Got it -- Budget: **$1k-5k**"`
+4. User taps "$1k–5k" → `callback_data: form:budget:1k_5k`
+   → `form_state.budget = "1k_5k"`
+   → Edit message: Q3 line becomes `3️⃣ Budget range? → *$1k–5k* ✅`
+   → `NO_REPLY`
 
-4. User taps Submit → `callback_data: form:submit`
-   → All answered. Agent proceeds with:
-   ```
-   { type: "mobile", timeline: "End of March", budget: "1k_5k" }
-   ```
+5. User taps "✓ Submit" → `callback_data: form:submit`
+   → All answered: `{ type: "mobile", timeline: "End of March", budget: "1k_5k" }`
+   → Edit message: replace with `✅ Form submitted. Processing your answers...`
+   → Model proceeds with full reply using collected data

@@ -1,34 +1,36 @@
 # questions-form
 
-An [OpenClaw](https://docs.openclaw.ai/) skill that teaches agents how to ask clarifying questions on Telegram using interactive inline-button forms.
+An [OpenClaw](https://docs.openclaw.ai/) skill that teaches agents how to ask clarifying questions on Telegram using a **single interactive form message** — no roundtrip spam, no acknowledgement messages, just buttons that update in place.
 
 ## What it does
 
-Instead of asking questions as plain text, the agent presents a structured form:
+Instead of asking questions one at a time (and burning tokens per click), the agent sends a **single message** with all questions and answers as inline buttons. The user taps to select, the message updates live, and the model is only invoked with a real output when Submit is tapped.
 
 ```
-I have a few questions before we proceed.
+📋 A few questions before we proceed — tap to answer, then Submit.
 
-1. What type of project?
-[Web App] [Mobile] [API]
-[Other (type your answer)]
+1️⃣ What type of project? → Mobile ✅
+2️⃣ What is your timeline?
+3️⃣ Budget range? → $1k–5k ✅
 
-2. What is your timeline?
-[This week] [This month] [No rush]
-[Other (type your answer)]
-
-[✓ Submit All Answers]
-[✗ Cancel]
+[Web App]  [✅ Mobile]  [API]
+[Other ✏️]
+[This week]  [This month]  [No rush]
+[Other ✏️]
+[< $1k]  [✅ $1k–5k]
+[$5k–10k]  [> $10k]
+[Other ✏️]
+[✓ Submit]  [✗ Cancel]
 ```
-
-Users tap buttons to answer, type free text for "Other", and submit when ready. The agent collects all answers before proceeding.
 
 ## Key features
 
-- **Multi-question forms** — all questions shown at once, answered in any order
-- **"Other" free-text option** — every question includes a fallback for custom input
-- **Change answers** — users can re-tap buttons before submitting
-- **Partial submission handling** — agent tells users which questions still need answers
+- **Single message form** — all questions in one Telegram message, updated in-place
+- **No token waste** — button taps edit the message silently (`NO_REPLY`); model only responds on Submit
+- **Live selection feedback** — tapped buttons show `✅` prefix instantly
+- **"Other ✏️" free-text option** — every question includes a custom-text fallback
+- **Change answers** — re-tap any button before submitting; previous selection replaced
+- **Partial submission handling** — warning shown inline when questions are unanswered
 - **Advanced patterns** — dependent questions, multi-select toggles, timeout handling
 
 ## Installation
@@ -60,3 +62,26 @@ questions-form/
 
 - [OpenClaw](https://docs.openclaw.ai/) with Telegram channel configured
 - Inline buttons enabled (`capabilities.inlineButtons` set to `"dm"`, `"all"`, or `"allowlist"`)
+- `editMessage` action enabled (`channels.telegram.actions.editMessage` not disabled)
+
+## How it works (architecture)
+
+```
+User taps button
+      │
+      ▼
+OpenClaw routes callback_data to model
+      │
+      ▼
+Model records answer + edits form message in-place
+      │
+      ▼
+Model replies NO_REPLY  ← no chat output, no extra messages
+      │
+  (repeat per tap)
+      │
+User taps Submit
+      │
+      ▼
+Model reads form_state → proceeds with full task response
+```
